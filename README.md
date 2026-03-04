@@ -154,6 +154,20 @@ Add or merge these **two parts** into your config (other options have defaults).
 }
 ```
 
+*Optional: Use a separate model for memory consolidation* (runs on `/new` command and automatic archival):
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": "anthropic/claude-opus-4-5",
+      "memoryModel": "anthropic/claude-sonnet-4"
+    }
+  }
+}
+```
+
+> If `memoryModel` is not set, nanobot uses the main `model` for memory consolidation.
+
 **3. Chat**
 
 ```bash
