@@ -7,6 +7,7 @@ import json
 import re
 import weakref
 from contextlib import AsyncExitStack
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -65,6 +66,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        context_logging: bool = False,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -82,6 +84,8 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.context_logging = context_logging
+        self._context_log_dir = workspace / "debug"
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -176,6 +180,39 @@ class AgentLoop:
                 return tc.name
             return f'{tc.name}("{val[:40]}…")' if len(val) > 40 else f'{tc.name}("{val}")'
         return ", ".join(_fmt(tc) for tc in tool_calls)
+
+    def _log_context(self, messages: list[dict], session_key: str) -> None:
+        """Append the full LLM context to a per-session debug JSONL file."""
+        if not self.context_logging:
+            return
+        try:
+            self._context_log_dir.mkdir(parents=True, exist_ok=True)
+            safe_key = session_key.replace(":", "_").replace("/", "_")
+            log_path = self._context_log_dir / f"context_{safe_key}.jsonl"
+
+            # Compute basic stats without serialising the full system prompt twice
+            system_chars = 0
+            history_turns = 0
+            for m in messages:
+                if m.get("role") == "system":
+                    c = m.get("content", "")
+                    system_chars = len(c) if isinstance(c, str) else len(json.dumps(c))
+                elif m.get("role") in ("user", "assistant", "tool"):
+                    history_turns += 1
+
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "session_key": session_key,
+                "model": self.model,
+                "system_prompt_chars": system_chars,
+                "history_turns": history_turns,
+                "total_messages": len(messages),
+                "messages": messages,
+            }
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            logger.opt(exception=True).warning("Failed to write context log")
 
     async def _run_agent_loop(
         self,
@@ -347,6 +384,7 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
+            self._log_context(messages, key)
             final_content, _, all_msgs = await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
@@ -423,6 +461,7 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )
+        self._log_context(initial_messages, key)
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})

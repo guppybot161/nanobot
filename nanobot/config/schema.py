@@ -228,6 +228,7 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 40
     memory_window: int = 100
     reasoning_effort: str | None = None  # low / medium / high — enables LLM thinking mode
+    context_logging: bool = False  # Log full LLM context (system prompt + messages) to debug JSONL
 
 
 class AgentsConfig(Base):
