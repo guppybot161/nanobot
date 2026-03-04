@@ -236,6 +236,49 @@ def _make_provider(config: Config):
     )
 
 
+def _make_provider_for_model(config: Config, model: str, provider_name: str | None = None):
+    """Create an LLM provider for a specific model, independent of agent defaults.
+
+    This is used to build dedicated provider instances for subsystems (e.g.
+    heartbeat) that need a different model than the main agent.
+    """
+    from nanobot.providers.custom_provider import CustomProvider
+    from nanobot.providers.litellm_provider import LiteLLMProvider
+    from nanobot.providers.openai_codex_provider import OpenAICodexProvider
+
+    # If provider is explicitly given, look it up directly; otherwise auto-detect from model.
+    if provider_name:
+        p = getattr(config.providers, provider_name, None)
+        resolved_name = provider_name
+    else:
+        p = config.get_provider(model)
+        resolved_name = config.get_provider_name(model)
+
+    if resolved_name == "openai_codex" or model.startswith("openai-codex/"):
+        return OpenAICodexProvider(default_model=model)
+
+    if resolved_name == "custom":
+        return CustomProvider(
+            api_key=p.api_key if p else "no-key",
+            api_base=config.get_api_base(model) or "http://localhost:8000/v1",
+            default_model=model,
+        )
+
+    from nanobot.providers.registry import find_by_name
+    spec = find_by_name(resolved_name)
+    if not model.startswith("bedrock/") and not (p and p.api_key) and not (spec and spec.is_oauth):
+        console.print(f"[red]Error: No API key for heartbeat model '{model}' (provider: {resolved_name}).[/red]")
+        raise typer.Exit(1)
+
+    return LiteLLMProvider(
+        api_key=p.api_key if p else None,
+        api_base=config.get_api_base(model),
+        default_model=model,
+        extra_headers=p.extra_headers if p else None,
+        provider_name=resolved_name,
+    )
+
+
 # ============================================================================
 # Gateway / Server
 # ============================================================================
@@ -378,10 +421,21 @@ def gateway(
         await bus.publish_outbound(OutboundMessage(channel=channel, chat_id=chat_id, content=response))
 
     hb_cfg = config.gateway.heartbeat
+
+    # Resolve heartbeat model/provider for Phase 1 (decision).
+    # If a dedicated heartbeat model is configured, build a separate
+    # provider instance so the cheap decision call never touches the
+    # main agent provider.
+    hb_model = hb_cfg.model or agent.model
+    if hb_cfg.model:
+        hb_provider = _make_provider_for_model(config, hb_cfg.model, hb_cfg.provider)
+    else:
+        hb_provider = provider
+
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
-        provider=provider,
-        model=agent.model,
+        provider=hb_provider,
+        model=hb_model,
         on_execute=on_heartbeat_execute,
         on_notify=on_heartbeat_notify,
         interval_s=hb_cfg.interval_s,

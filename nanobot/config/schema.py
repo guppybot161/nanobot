@@ -271,6 +271,8 @@ class HeartbeatConfig(Base):
 
     enabled: bool = True
     interval_s: int = 30 * 60  # 30 minutes
+    model: str | None = None  # Model for heartbeat decision (Phase 1). None = use agent default.
+    provider: str | None = None  # Provider for heartbeat model. None = auto-detect from model.
 
 
 class GatewayConfig(Base):
