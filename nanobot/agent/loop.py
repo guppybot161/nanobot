@@ -393,7 +393,20 @@ class AgentLoop:
                                   content="New session started.")
         if cmd == "/help":
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/help — Show available commands")
+                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/stop — Stop the current task\n/status — Show current LLM config\n/help — Show available commands")
+        if cmd == "/status":
+            provider_name = type(self.provider).__name__.replace("Provider", "")
+            status_text = (
+                f"🔧 Current config:\n"
+                f"• Model: {self.model}\n"
+                f"• Provider: {provider_name}\n"
+                f"• Memory model: {self.memory_model or self.model}\n"
+                f"• Max tokens: {self.max_tokens}\n"
+                f"• Temperature: {self.temperature}"
+            )
+            if self.reasoning_effort:
+                status_text += f"\n• Reasoning effort: {self.reasoning_effort}"
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=status_text)
 
         unconsolidated = len(session.messages) - session.last_consolidated
         if (unconsolidated >= self.memory_window and session.key not in self._consolidating):
